@@ -32,6 +32,16 @@ FONT = cv2.FONT_HERSHEY_SIMPLEX
 
 
 @dataclass
+class MouseHud:
+    enabled: bool
+    velocity: tuple[float, float] = (0.0, 0.0)
+    frozen: bool = False
+    released: bool = False
+    click_flash: Optional[str] = None
+    dry_run: bool = False
+
+
+@dataclass
 class HudState:
     direction: str
     h: Optional[float]
@@ -44,6 +54,7 @@ class HudState:
     show_landmarks: bool = True
     mirrored: bool = True
     vertical_center: float = g.GazeThresholds.vertical_center
+    mouse: Optional[MouseHud] = None
 
 
 def _put_text(img, text, org, scale=0.6, color=TEXT_COLOR, thickness=1):
@@ -106,10 +117,49 @@ def draw_radar(img: np.ndarray, direction: str, h: Optional[float], v: Optional[
         cv2.circle(img, dot, 4, (255, 255, 255), 1, cv2.LINE_AA)
 
 
+def velocity_label(velocity: tuple[float, float]) -> str:
+    """ASCII arrow plus speed, e.g. ``<- 420 px/s``; ``stop`` when still."""
+    vx, vy = velocity
+    speed = float(np.hypot(vx, vy))
+    if speed < 1.0:
+        return "stop"
+    horiz = "<" if vx < 0 else ">" if vx > 0 else ""
+    vert = "^" if vy < 0 else "v" if vy > 0 else ""
+    if abs(vx) < 0.5 * abs(vy):
+        horiz = ""
+    elif abs(vy) < 0.5 * abs(vx):
+        vert = ""
+    return f"{horiz}{vert} {speed:.0f} px/s"
+
+
+def draw_mouse_line(img: np.ndarray, mouse: MouseHud, org: tuple[int, int]) -> None:
+    if not mouse.enabled:
+        text, color = "MOUSE OFF  m to resume", DIM_COLOR
+    elif mouse.released:
+        text, color = "MOUSE ON   no face", ALERT
+    elif mouse.frozen:
+        text, color = "MOUSE ON   hold", ACCENT
+    else:
+        text, color = f"MOUSE ON   {velocity_label(mouse.velocity)}", EYE_COLOR
+    if mouse.dry_run:
+        text += " (dry)"
+    _put_text(img, text, org, 0.5, color)
+
+
+def draw_click_flash(img: np.ndarray, button: str) -> None:
+    w_img = img.shape[1]
+    msg = f"CLICK {button.upper()}"
+    (tw, th), _ = cv2.getTextSize(msg, FONT, 1.0, 2)
+    x = (w_img - tw) // 2
+    _draw_panel(img, x - 12, 14, tw + 24, th + 24, alpha=0.7)
+    _put_text(img, msg, (x, 14 + th + 12), 1.0, ACCENT, 2)
+
+
 def draw_hud(img: np.ndarray, state: HudState) -> None:
     h_img, w_img = img.shape[:2]
 
-    _draw_panel(img, 8, 8, 250, 112)
+    panel_w, panel_h = (250, 112) if state.mouse is None else (300, 136)
+    _draw_panel(img, 8, 8, panel_w, panel_h)
     if state.face_found:
         color = ACCENT if state.direction != g.CENTER else EYE_COLOR
         _put_text(img, f"GAZE  {state.direction}", (16, 38), 0.8, color, 2)
@@ -127,6 +177,10 @@ def draw_hud(img: np.ndarray, state: HudState) -> None:
     closed = "  (closed)" if state.eyes_closed else ""
     _put_text(img, f"Blinks {state.blink_count}   {ear_txt}{closed}", (16, 86), 0.5, TEXT_COLOR)
     _put_text(img, f"{state.fps:4.1f} fps", (16, 108), 0.5, DIM_COLOR)
+    if state.mouse is not None:
+        draw_mouse_line(img, state.mouse, (16, 132))
+        if state.mouse.click_flash:
+            draw_click_flash(img, state.mouse.click_flash)
 
     draw_radar(img, state.direction if state.face_found else g.CENTER,
                state.h if state.face_found else None,
@@ -142,6 +196,8 @@ def draw_hud(img: np.ndarray, state: HudState) -> None:
         _put_text(img, msg, ((w_img - tw) // 2, h_img - 11), 0.7, ALERT, 2)
 
     hint = "q quit | f mirror | l landmarks | r reset"
+    if state.mouse is not None:
+        hint += " | m mouse"
     (tw, _), _ = cv2.getTextSize(hint, FONT, 0.42, 1)
     _put_text(img, hint, (w_img - tw - 10, h_img - 10 if state.face_found else h_img - 46), 0.42, DIM_COLOR)
 

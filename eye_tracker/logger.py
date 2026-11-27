@@ -17,7 +17,7 @@ def _now() -> str:
 class MovementLogger:
     """Emits one line per *event* rather than per frame.
 
-    Events: gaze direction change, blink, face lost / face found.
+    Events: gaze direction change, blink, face lost / face found, mouse click.
     """
 
     def __init__(self, csv_path: Optional[str] = None, stream: IO[str] = sys.stdout, quiet: bool = False) -> None:
@@ -63,6 +63,9 @@ class MovementLogger:
 
     def eyes_closed(self, duration_frames: int, ear: Optional[float] = None, blinks: Optional[int] = None) -> None:
         self._emit(f"eyes closed for {duration_frames} frames", "eyes_closed", self._last_direction or "", ear=ear, blinks=blinks)
+
+    def click(self, button: str, x: int, y: int, blinks: Optional[int] = None) -> None:
+        self._emit(f"CLICK {button} at ({x}, {y})", f"click_{button}", self._last_direction or "", blinks=blinks)
 
     def face(self, visible: bool) -> None:
         if visible == self._face_visible:
