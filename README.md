@@ -61,6 +61,20 @@ uv run python -m eye_tracker
 uv run eye-tracker
 ```
 
+### macOS notes
+
+- The first run triggers macOS's camera permission prompt for whichever app
+  launched the terminal (Terminal, iTerm, Cursor, VS Code...). Click Allow. If
+  you dismissed it, enable it under System Settings > Privacy & Security >
+  Camera, then start the app again.
+- If you get a black image or the wrong camera, your iPhone may be registered
+  as a Continuity Camera at index 0. Try `--camera 1`.
+- Apple Silicon is supported natively. The locked OpenCV build requires macOS 15
+  or newer; on an older macOS run `uv lock --upgrade-package opencv-python
+  --upgrade-package opencv-contrib-python` after adding an upper bound
+  `opencv-python<5` to `pyproject.toml`. Intel Macs need MediaPipe 0.10.x
+  (`uv add "mediapipe<1"`), which exposes the same `tasks` API.
+
 Keys while the window is focused:
 
 | Key | Action                         |
