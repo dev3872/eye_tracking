@@ -12,6 +12,8 @@ In the window you get:
   3x3 "radar" showing where the eyes are pointing
 - Blink detection with a running blink counter
 - FPS, and a clear "No face detected" banner when you leave the frame
+- Optional hands-free mouse control (`--mouse`): steer the cursor with your
+  gaze and click with deliberate blinks, see [Mouse control](#mouse-control)
 
 In the terminal you get a movement log that only prints when something
 changes, so it stays readable:
@@ -83,6 +85,7 @@ Keys while the window is focused:
 | `f` | Toggle mirror (selfie) view    |
 | `l` | Toggle landmark overlay        |
 | `r` | Reset blink counter and smoothing |
+| `m` | Pause / resume mouse control (with `--mouse`) |
 
 Useful options:
 
@@ -103,6 +106,101 @@ Useful options:
 --ear-threshold X   blink threshold on the Eye Aspect Ratio (default 0.21)
 --smoothing X       EMA factor for gaze ratios, 0-1 (default 0.35, lower = smoother)
 ```
+
+## Mouse control
+
+The tracker can also drive the real mouse: look to move the cursor, blink
+deliberately to click. It is **off by default**; enable it with:
+
+```bash
+uv run python -m eye_tracker --mouse
+```
+
+Try it first with `--dry-run`, which runs the whole control loop but only
+*logs* the moves and clicks it would make (`dry-run: move -> (x, y)`,
+`dry-run: click left at (x, y)`) without touching the mouse.
+
+### How it moves
+
+There is no calibration, so the cursor is driven like a joystick rather than
+pointed at: look away from centre and the cursor glides in that direction;
+look back to centre and it stops. The dead zone is the same as the gaze
+thresholds (so the cursor only moves while the HUD says `LEFT`/`RIGHT`/`UP`/
+`DOWN`), and beyond it the speed rises with the square of how far the iris
+travels, up to `--mouse-speed`. Small glances nudge, hard glances fly. The
+cursor is clamped to the screen (a couple of pixels inside the edges so it
+never lands in a hot corner) and stops immediately when the eyes are closed or
+the face is not visible. If the face is lost for more than a second, control is
+released (any half-finished click gesture is dropped) until the face is back.
+Physical mouse movement is always respected: the controller works relative to
+wherever the cursor is right now.
+
+### Blink gestures
+
+Natural blinks (roughly 0.1-0.25 s) are ignored. Clicks come from *deliberate*
+blinks, i.e. keeping the eyes shut a little longer:
+
+| Gesture | Action |
+| --- | --- |
+| One deliberate blink: eyes shut 0.35-1.0 s | Left click |
+| Two deliberate blinks, the second starting within 0.7 s of the first | Right click |
+| Eyes shut longer than 1.0 s | Nothing (cancels a pending click) |
+
+The left click fires once the 0.7 s window for a second blink has passed, so
+a right-click gesture never produces a stray left click first. From the moment
+the eyes start to close until the click has fired plus 0.3 s afterwards, the
+cursor is frozen, and the click lands where the cursor was when the eyes
+began to close, so the gaze drift that happens during a blink cannot drag it
+off the target. There is no dwell click: just looking at something never
+clicks it.
+
+Clicks appear in the movement log and CSV as `click_left` / `click_right`, and
+the window flashes `CLICK LEFT` / `CLICK RIGHT`.
+
+### Pausing and bailing out
+
+- Press `m` in the window to pause or resume mouse control; the HUD shows
+  `MOUSE ON` / `MOUSE OFF`.
+- Press `q` or `Esc` in the window (or `Ctrl-C` in the terminal) to quit. The
+  cursor only ever moves while the window loop is running.
+- The real mouse keeps working: grab it and move it, the tracker just
+  continues from the new position. Looking straight at the camera also stops
+  all movement.
+
+### Tuning
+
+```
+--mouse               enable mouse control (default off)
+--dry-run             log intended moves/clicks instead of performing them (implies --mouse)
+--mouse-speed PX      maximum cursor speed in px/s (default 900)
+--mouse-gain G        speed curve exponent: 1 = linear, 2 = squared (default), higher = gentler near centre
+--click-blink-min S   shortest closure counted as a deliberate blink (default 0.35)
+--click-blink-max S   longest closure counted as a deliberate blink (default 1.0)
+--screen WxH          screen size if it cannot be detected (or to restrict movement to one display)
+```
+
+If natural blinks trigger clicks, raise `--click-blink-min` (e.g. `0.45`);
+if deliberate blinks are missed, lower it or raise `--click-blink-max`. Blink
+timing comes from the camera timestamps, so a slow webcam (under ~15 fps)
+makes the duration coarse; `--width 640 --height 480` usually helps the frame
+rate. The dead zone and vertical centre follow `--h-threshold`,
+`--up-threshold`, `--down-threshold` and `--v-center`, so if the cursor drifts
+while you look at the centre, fix `--v-center` first.
+
+### macOS requirements
+
+Moving the mouse programmatically needs permission:
+
+1. System Settings > Privacy & Security > **Accessibility**: add and enable the
+   app that runs the tracker (Terminal, iTerm, Cursor, VS Code...). Without it
+   `pynput` silently fails to move the cursor or macOS logs
+   "This process is not trusted".
+2. macOS may also prompt for **Input Monitoring** for the same app; allow it.
+3. Restart the terminal app after granting the permission.
+
+The screen size is read from the main display; with several monitors, pass
+`--screen WxH` to span the full desktop. Windows and Linux (X11) need nothing
+extra; on Wayland, pynput cannot move the cursor, so use an X11 session.
 
 ## How direction is decided
 
@@ -132,12 +230,14 @@ head turns read as gaze shifts, which is expected without calibration.
 uv run pytest
 ```
 
-The tests exercise the gaze and blink maths on synthetic landmarks and need no
-camera. To check the full pipeline without a webcam, run it on any video that
-contains a face:
+The tests exercise the gaze and blink maths on synthetic landmarks and the
+mouse controller against an in-memory backend; they need no camera and never
+touch the real mouse. To check the full pipeline without a webcam, run it on
+any video that contains a face:
 
 ```bash
 uv run python -m eye_tracker --video sample.mp4 --no-window --save-frame out.png
+uv run python -m eye_tracker --video sample.mp4 --no-window --mouse --dry-run --fast
 ```
 
 ## Project layout
@@ -149,11 +249,13 @@ eye_tracker/
   landmarks.py  MediaPipe Face Landmarker wrapper + model download
   gaze.py       iris ratios -> direction (pure functions + smoother)
   blink.py      Eye Aspect Ratio -> blink events
+  mouse.py      gaze -> cursor velocity, blinks -> clicks, pynput / dry-run backends
   overlay.py    all OpenCV drawing
   logger.py     terminal and CSV movement log
 tests/
   test_gaze.py
   test_blink.py
+  test_mouse.py
 ```
 
 ## Privacy
