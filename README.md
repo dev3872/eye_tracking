@@ -74,7 +74,8 @@ Useful options:
 
 ```
 --camera N          webcam index (default 0)
---video PATH        run on a video file instead of the webcam
+--video PATH        run on a video file instead of the webcam (played at its own frame rate)
+--fast              with --video: do not pace playback, process as fast as possible
 --width/--height    request a capture resolution
 --no-flip           do not mirror the preview
 --log-csv FILE      also append every event to a CSV file

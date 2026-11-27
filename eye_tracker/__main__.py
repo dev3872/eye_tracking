@@ -31,6 +31,8 @@ def build_parser() -> argparse.ArgumentParser:
     src.add_argument("--width", type=int, default=None, help="requested capture width")
     src.add_argument("--height", type=int, default=None, help="requested capture height")
     src.add_argument("--max-frames", type=int, default=None, help="stop after this many frames")
+    src.add_argument("--fast", action="store_true",
+                     help="with --video: process as fast as possible instead of pacing to the file's frame rate")
 
     view = p.add_argument_group("display")
     view.add_argument("--no-flip", dest="flip", action="store_false", help="do not mirror the preview")
@@ -105,10 +107,19 @@ def run(args: argparse.Namespace) -> int:
             log.info(f"source opened: {'file ' + args.video if args.video else f'webcam #{args.camera}'} {w}x{h}")
             if show_window:
                 cv2.namedWindow(WINDOW_TITLE, cv2.WINDOW_NORMAL)
+            # A file is decoded far faster than real time; pace it so the
+            # preview looks like a live camera. Headless runs stay fast.
+            pace = source.is_file and show_window and not args.fast
+            playback_start = time.perf_counter()
 
             for frame in source.frames():
                 if args.max_frames is not None and frame.index >= args.max_frames:
                     break
+                if pace:
+                    due = playback_start + frame.timestamp_ms / 1000.0
+                    delay = due - time.perf_counter()
+                    if delay > 0:
+                        time.sleep(delay)
                 img = cv2.flip(frame.image, 1) if mirrored else frame.image
                 landmarks = landmarker.detect(img, frame.timestamp_ms)
                 fps.tick()
